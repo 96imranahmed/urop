@@ -1,0 +1,2 @@
+model_checkpoint_path: "/home/imran/Desktop/CascadeCNN/var_save/48-net.ckpt"
+all_model_checkpoint_paths: "/home/imran/Desktop/CascadeCNN/var_save/48-net.ckpt"
