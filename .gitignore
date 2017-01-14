@@ -1,5 +1,7 @@
 # Video/Audio Files #
 #####################
+*.mp4
+*.pyc
 
 # Compiled source #
 ###################
