@@ -6,7 +6,6 @@ import time
 import argparse
 from cypico import detect, remove_overlap, load_cascade
 from primesense import openni2
-import multiprocessing
 import os
 
 open_ni = None

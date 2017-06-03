@@ -4,41 +4,94 @@ import cv2
 import numpy as np
 import time
 import argparse
-from cypico import detect, remove_overlap, load_cascade
-from primesense import openni2
+import cypico
 import multiprocessing
 import os
 
-open_ni = None
-parser = argparse.ArgumentParser()
-parser.add_argument("--openni", help="Enable read from Asus Action Cam", action='store_true', default=False)
-args = parser.parse_args()
 face_settings = { 'confidence': 1, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
                     'scale': 1.1, 'stride':0.2, 'min_size': 30  }
+
 face_suppress_settings = {'round_to_val': 30, 'radii_round': 50, 'stack_length': 3, 'positive_thresh': 4, \
  'remove_thresh': -1, 'step_add': 1, 'step_subtract': -2, 'coarse_scale': 8.0, 'coarse_radii_scale': 3.0}
-id_to_settings = {0: ('manual', face_settings, face_suppress_settings)}
-test_path = os.getcwd() + '/face.hex'
 
-def main(args_in):
+test_path = os.getcwd() + '/face.hex'
+feed_list = [(True ,test_path, face_settings, face_suppress_settings), (False, 'faces', face_settings, face_suppress_settings)] 
+#Please put fastest cascade fist, or it may risk mucking up the quality of the updates
+
+class Process(object):
     vid_in = None
-    open_ni = args_in.openni
+    cur_frame = None
+    setings = {}
+    access_lock = multiprocessing.Lock()
+    instances = []
+
+    def setup_input(self):
+        self.vid_in = cv2.VideoCapture('ISS.mp4')
+        self.vid_in.set(cv2.CAP_PROP_POS_FRAMES,400)
+    
+    def update_frame(self):
+        self.access_lock.acquire() #Locks to prevent simultaneous R/W
+        _, frm = self.vid_in.read() #Need to change as required
+        self.cur_frame = frm
+        self.access_lock.release()
+        return frm
+
+    def read_frame(self)
+        self.access_lock.acquire() #Locks to prevent simultaneous R/W§
+        ret_val = self.cur_frame
+        self.access_lock.release()
+        return ret_val
+
+    def master(self):
+        self.setup_capture() #Required if using OpenCV (sets video read parameters)
+        while (True):
+            frm = self.update_frame()
+
+    def worker(self, id):
+        while (self.cur_frame == None ):
+            pass #Wait until a valid frame can be read ('burn-in')
+        while(True):
+            frm = self.read_frame()
+
+
+    
+    def __init__(self, feed_list):
+        has_manual = False
+        num_cascades = len(feed_list)
+        for __indx in range(num_cascades):
+            __inst = feed_list[__indx]
+            if __inst[0]:
+                if (has_manual):
+                    raise Exception('Multiple run-time cascades loads are not allowed, please install all but \
+                    one cascade in the appropriate package')
+                else:
+                    has_manual = True
+                    cypico.load_cascade(_inst[1]) #Loads cascade into memory
+                    self.settings[__indx] = ('manual', __inst[2], __inst[3])
+            else:
+                self.settings[__indx] = (__inst[1], __inst[2], __inst[3])
+        for __indx in range(num_cascades):
+            p = None
+            if __indx == 0:
+                p = multiprocessing.Process(target=self.master, args=(self))
+            else:
+                p = multiprocessing.Process(target=self.worker, args=(self, __indx))
+            self.instances.append(p)
+            p.start()
+        
+
+
+            
+
+
+
+def main():
+    vid_in = None
     #OpenCV inits
     color_stream = None
-    load_cascade(test_path)
-    if open_ni:
-        openni2.initialize('./redist/')
-        try:
-            dev = openni2.Device.open_any()
-            color_stream = dev.create_color_stream()
-            color_stream.start()
-        except:
-            print('No valid device connected')
-            open_ni = False
-            raise ValueError
-    else:
-        vid_in = cv2.VideoCapture('ISS.mp4')
-        vid_in.set(cv2.CAP_PROP_POS_FRAMES,400)
+    cypico.load_cascade(test_path)
+    vid_in = cv2.VideoCapture('ISS.mp4')
+    vid_in.set(cv2.CAP_PROP_POS_FRAMES,400)
     ret = True
     cur_time = time.time()
     loop_lim = 10
@@ -51,14 +104,7 @@ def main(args_in):
             chk = time.time() - cur_time
             cur_time = time.time()
             print(loop_lim/chk)
-        frame = None
-        if open_ni:
-            frame_full = color_stream.read_frame()
-            frame = np.ctypeslib.as_array(frame_full.get_buffer_as_triplet())
-            frame = frame.reshape((frame_full.height,frame_full.width,3)) 
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        else:
-            _, frame = vid_in.read()
+        _, frame = vid_in.read()
         if frame is None: 
             print('Error reading frame') 
             return
@@ -69,19 +115,19 @@ def main(args_in):
                 dim = (int(width_des), int(frame.shape[0] * r))
                 frame = cv2.resize(frame, dim, interpolation = cv2.INTER_LANCZOS4)
         except:
-            print('Error with resize/color conversion - make sure to unplug action cam before running without openni flag')
+            pass
         data = lighting_balance(frame, True, False)
         data = np.asarray(data, dtype='uint8')
         det = None
         if open_ni:
-            det = detect(data, face_settings, 'manual')
+            det = cypico.detect(data, face_settings, 'manual')
         else:
-            det = detect(data, face_settings,  'manual')
-        chk = remove_overlap(det)
+            det = cypico.detect(data, face_settings,  'manual')
+        chk = cypico.remove_overlap(det)
         fpr_buffer, chk = clean_fpr(fpr_buffer, chk, face_suppress_settings)
         for cur in chk:
-            cv2.circle(frame, (int(cur[1][1]), int(cur[1][0])e), int(cur[2]/2), (0,0,255), 3)
-        cv2.imshow('Webcam', frame)
+            cv2.circle(frame, (int(cur[1][1]), int(cur[1][0])), int(cur[2]/2), (0,0,255), 3)
+        cv2.imshow('Camera', frame)
         cv2.waitKey(1)
     vid_in.release()
     cv2.destroyAllWindows()
@@ -245,4 +291,5 @@ def __mean(input):
     return int(float(sum(input))/len(input))
 
 if __name__ == "__main__":
-    main(args)
+    main()
+  
