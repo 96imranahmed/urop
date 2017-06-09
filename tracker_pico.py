@@ -12,11 +12,12 @@ open_ni = None
 parser = argparse.ArgumentParser()
 parser.add_argument("--openni", help="Enable read from Asus Action Cam", action='store_true', default=False)
 args = parser.parse_args()
-face_settings = { 'confidence': 1, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
+old_settings = { 'confidence': 1, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
                     'scale': 1.1, 'stride':0.2, 'min_size': 30  }
+face_settings = { 'confidence': 2, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
+                    'scale': 1.4, 'stride':0.4, 'min_size': 30  }
 face_suppress_settings = {'round_to_val': 30, 'radii_round': 50, 'stack_length': 3, 'positive_thresh': 4, \
  'remove_thresh': -1, 'step_add': 1, 'step_subtract': -2, 'coarse_scale': 8.0, 'coarse_radii_scale': 3.0}
-id_to_settings = {0: ('manual', face_settings, face_suppress_settings)}
 test_path = os.getcwd() + '/face.hex'
 
 def main(args_in):
@@ -24,7 +25,6 @@ def main(args_in):
     open_ni = args_in.openni
     #OpenCV inits
     color_stream = None
-    load_cascade(test_path)
     if open_ni:
         openni2.initialize('./redist/')
         try:
@@ -73,13 +73,13 @@ def main(args_in):
         data = np.asarray(data, dtype='uint8')
         det = None
         if open_ni:
-            det = detect(data, face_settings, 'manual')
+            det = detect(data, face_settings, 'faces')
         else:
-            det = detect(data, face_settings,  'manual')
+            det = detect(data, face_settings,  'faces')
         chk = remove_overlap(det)
         fpr_buffer, chk = clean_fpr(fpr_buffer, chk, face_suppress_settings)
         for cur in chk:
-            cv2.circle(frame, (int(cur[1][1]), int(cur[1][0])e), int(cur[2]/2), (0,0,255), 3)
+            cv2.circle(frame, (int(cur[1][1]), int(cur[1][0])), int(cur[2]/2), (0,0,255), 3)
         cv2.imshow('Webcam', frame)
         cv2.waitKey(1)
     vid_in.release()
