@@ -22,7 +22,6 @@ class Process(object):
     settings = {}
     preproc_CLAHE = False
     preproc_BLUR = False
-    vid_shape = None
     vid_update_method = None
     vid_op_method = None
     num_cascades = 0
@@ -49,10 +48,6 @@ class Process(object):
             self.preproc_BLUR = settings['Blur']
         except KeyError:
             self.preproc_BLUR = False #Whether to run CLAHE Histogram Equalisation on input image
-        try:
-            self.vid_shape = settings['Shape']
-        except KeyError:
-            raise Exception('No shape passed as part of config')
         try:
             self.vid_update_method = settings['Update_Method']
         except KeyError:
@@ -349,18 +344,6 @@ def setup_video_input():  #Change as required
     vid_in = cv2.VideoCapture(file)
     vid_in.set(cv2.CAP_PROP_POS_FRAMES,500)
 
-def get_vid_shape(width_desired = 640.0):  #Change as required
-    global vid_in, file
-    _, frm = vid_in.read() 
-    r = width_desired / frm.shape[1]
-    try: 
-        if r < 1:
-            dim = (int(width_desired), int(frm.shape[0] * r))
-            frm = cv2.resize(frm, dim, interpolation = cv2.INTER_LANCZOS4)
-    except Exception as ex:
-        print(ex)
-    return np.shape(frm)
-
 def process_detection(detections, id):
     global cur_frame
     if cur_frame is None: return #Hasn't initialised yet, return
@@ -372,7 +355,7 @@ def process_detection(detections, id):
 
 def main():
     setup_video_input()
-    config = {'CLAHE': True, 'Blur': False, 'Shape': get_vid_shape(), 'Update_Method': update_frame, 'Output_Method': process_detection}
+    config = {'CLAHE': True, 'Blur': False, 'Update_Method': update_frame, 'Output_Method': process_detection}
     cur_proc = Process(feed_list = feed_list, settings = config)
     cur_proc.run()
 
