@@ -8,9 +8,8 @@ import cypico
 import multiprocessing
 import os
 
-face_settings = { 'confidence': 1, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
-                    'scale': 1.1, 'stride':0.2, 'min_size': 30 }
-
+face_settings = { 'confidence': 3, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
+                    'scale': 1.2, 'stride':0.2, 'min_size': 20  }
 face_suppress_settings = {'round_to_val': 30, 'radii_round': 50, 'stack_length': 3, 'positive_thresh': 4, \
  'remove_thresh': -1, 'step_add': 1, 'step_subtract': -2, 'coarse_scale': 8.0, 'coarse_radii_scale': 3.0}
 
@@ -25,10 +24,12 @@ class Process(object):
     preproc_BLUR = False
     vid_shape = None
     vid_update_method = None
+    vid_op_method = None
     num_cascades = 0
 
     #Multiprocessing Specific
     m = multiprocessing.Manager()
+    results_q = m.Queue()
     pipe_main, pipe_master = multiprocessing.Pipe()
     access_lock = multiprocessing.Lock()
     instances = []
@@ -56,7 +57,10 @@ class Process(object):
             self.vid_update_method = settings['Update_Method']
         except KeyError:
             raise Exception('No frame update get method passed as part of config')
-   
+        try:
+            self.vid_op_method = settings['Output_Method']
+        except KeyError:
+            raise Exception('No output method passed as part of config')
         for __indx in range(self.num_cascades):
             __inst = feed_list[__indx]
             if __inst[0]:
@@ -75,22 +79,29 @@ class Process(object):
         for __indx in range(self.num_cascades):
             p = None
             if __indx == 0:
-                p = multiprocessing.Process(target=self.master, args=(self.access_lock, self.settings[0], c_frm, self.pipe_master))
+                p = multiprocessing.Process(target=self.master, args=(self.access_lock, self.settings[0], c_frm, self.pipe_master, self.results_q))
             else:
-                p = multiprocessing.Process(target=self.worker, args=(self.access_lock, __indx, c_frm))
+                p = multiprocessing.Process(target=self.worker, args=(self.access_lock, __indx, c_frm, self.results_q))
             self.instances.append(p)
             p.start()
-        
+        pipe_event = False
         while True:
-            pipe_event = self.pipe_main.recv() #Receives a request from the master
+            if self.pipe_main.poll():
+                pipe_event = self.pipe_main.recv() #Receives a request from the master
             if type(pipe_event) == int and pipe_event == 1:
                 self.access_lock.acquire()
                 c_frm.value = self.update_frame()
                 self.pipe_main.send(0)
                 self.access_lock.release()
+            try:
+                results = self.results_q.get(False)
+                self.vid_op_method(results[0], results[1])
+            except Exception as ex:
+                pass #Results Q is empty ah well
+            pipe_event = None #reset
         [p.join() for p in self.instances]
     
-    def master(self, lock, set_tup, shared_frame, master_pipe):
+    def master(self, lock, set_tup, shared_frame, master_pipe, q_out):
         cur_time = time.time()
         cur_loop = 0 #FOR FPS CALC
         fpr_buffer = {} #For false positive clean
@@ -113,13 +124,12 @@ class Process(object):
                 cur_time = time.time()
                 print('Master FPS = ' + str(self.loop_lim/chk))
             #COMPUTE FPS END#
-
             det = cypico.detect(frm, set_tup[1], set_tup[0])
             det = cypico.remove_overlap(det)
             fpr_buffer, det = self.clean_fpr(fpr_buffer, det, set_tup[2])
-            # print('master', len(det))
+            q_out.put((det, 0))
 
-    def worker(self, lock, worker_id, shared_frame):
+    def worker(self, lock, worker_id, shared_frame, q_out):
         cur_time = time.time()
         cur_loop = 0 #FOR FPS CALC
         fpr_buffer = {} #For false positive clean
@@ -142,13 +152,12 @@ class Process(object):
             det = cypico.detect(frm, set_tup[1], set_tup[0])
             det = cypico.remove_overlap(det)
             fpr_buffer, det = self.clean_fpr(fpr_buffer, det, set_tup[2])
-            # print('worker', len(det))
+            q_out.put((det, worker_id))
 
 
      
     def update_frame(self):
         frm = self.vid_update_method()
-        frm = cv2.resize(frm, self.vid_shape[:2], interpolation = cv2.INTER_LANCZOS4)
         frm = self.lighting_balance(frm, self.preproc_CLAHE, self.preproc_BLUR)
         frm = np.asarray(frm, dtype='uint8')
         return frm
@@ -322,7 +331,7 @@ cv2.setNumThreads(0) #Done for OpenCV
 cur_frame = None
 
 def update_frame(width_desired = 640.0):  #Change as required
-    global vid_in
+    global vid_in, cur_frame
     ret, frm = vid_in.read()
     if ret == False: raise Exception('Video update failure')
     r = width_desired / frm.shape[1]
@@ -331,7 +340,8 @@ def update_frame(width_desired = 640.0):  #Change as required
             dim = (int(width_desired), int(frm.shape[0] * r))
             frm = cv2.resize(frm, dim, interpolation = cv2.INTER_LANCZOS4)
     except Exception as ex:
-        pass
+        print(ex)
+    cur_frame = frm
     return frm
 
 def setup_video_input():  #Change as required
@@ -348,12 +358,21 @@ def get_vid_shape(width_desired = 640.0):  #Change as required
             dim = (int(width_desired), int(frm.shape[0] * r))
             frm = cv2.resize(frm, dim, interpolation = cv2.INTER_LANCZOS4)
     except Exception as ex:
-        pass
+        print(ex)
     return np.shape(frm)
+
+def process_detection(detections, id):
+    global cur_frame
+    if cur_frame is None: return #Hasn't initialised yet, return
+    id_color_map = {0:(0,0,255), 1:(0,255,0), 2:(255,0,0)}
+    for cur in detections:
+        cv2.circle(cur_frame, (int(cur[1][1]), int(cur[1][0])), int(cur[2]/2), id_color_map[id], 3)
+    cv2.imshow('Camera', cur_frame)
+    cv2.waitKey(1)
 
 def main():
     setup_video_input()
-    config = {'CLAHE': True, 'Blur': False, 'Shape': get_vid_shape(), 'Update_Method': update_frame}
+    config = {'CLAHE': True, 'Blur': False, 'Shape': get_vid_shape(), 'Update_Method': update_frame, 'Output_Method': process_detection}
     cur_proc = Process(feed_list = feed_list, settings = config)
     cur_proc.run()
 
