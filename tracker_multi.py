@@ -376,15 +376,6 @@ def main():
     cur_proc = Process(feed_list = feed_list, settings = config)
     cur_proc.run()
 
-#     for cur in chk:
-#             cv2.circle(frame, (int(cur[1][1]), int(cur[1][0])), int(cur[2]/2), (0,0,255), 3)
-#         cv2.imshow('Camera', frame)
-#         cv2.waitKey(1)
-#     vid_in.release()
-#     cv2.destroyAllWindows()
-
-
-
 if __name__ == "__main__":
     main()
   
