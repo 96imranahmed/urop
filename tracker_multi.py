@@ -15,7 +15,7 @@ face_suppress_settings = {'round_to_val': 30, 'radii_round': 50, 'stack_length':
  'remove_thresh': -1, 'step_add': 1, 'step_subtract': -2, 'coarse_scale': 8.0, 'coarse_radii_scale': 3.0}
 
 test_path = os.getcwd() + '/face.hex'
-feed_list = [(False, 'bkp', face_settings, face_suppress_settings)] 
+feed_list = [(False, 'bkp', face_settings, face_suppress_settings), (False, 'bkp', face_settings, face_suppress_settings)] 
 #Please put fastest cascade first, or it may risk ruining the quality of the updates
 
 class Process(object):
@@ -29,7 +29,7 @@ class Process(object):
 
     #Multiprocessing Specific
     m = multiprocessing.Manager()
-    ev = m.Queue()
+    pipe_main, pipe_master = multiprocessing.Pipe()
     access_lock = multiprocessing.Lock()
     instances = []
 
@@ -75,46 +75,36 @@ class Process(object):
         for __indx in range(self.num_cascades):
             p = None
             if __indx == 0:
-                p = multiprocessing.Process(target=self.master, args=(self.access_lock, self.settings[0], c_frm, self.ev))
+                p = multiprocessing.Process(target=self.master, args=(self.access_lock, self.settings[0], c_frm, self.pipe_master))
             else:
-                p = multiprocessing.Process(target=self.worker, args=(self.access_lock, __indx, c_frm, self.ev))
+                p = multiprocessing.Process(target=self.worker, args=(self.access_lock, __indx, c_frm))
             self.instances.append(p)
             p.start()
+        
         while True:
-            event = self.ev.get()
-            if event is None:
-                break
-            if type(event) == int and event == 1: #Respond to request for frame_update
+            pipe_event = self.pipe_main.recv() #Receives a request from the master
+            if type(pipe_event) == int and pipe_event == 1:
                 self.access_lock.acquire()
-                print('Loop has lock')
                 c_frm.value = self.update_frame()
-                self.ev.put(0)
-                print('Loop released lock')
+                self.pipe_main.send(0)
                 self.access_lock.release()
         [p.join() for p in self.instances]
     
-    def master(self, lock, set_tup, shared_frame, ev_queue):
+    def master(self, lock, set_tup, shared_frame, master_pipe):
         cur_time = time.time()
         cur_loop = 0 #FOR FPS CALC
         fpr_buffer = {} #For false positive clean
 
         while (True):
-            ev_queue.put(1) #Request frame_update
+            master_pipe.send(1)
             frm = None
-            while True:
-                event = ev_queue.get()
-                if type(event) == int and event == 0:
-                    print('Master acquiring lock')                
-                    lock.acquire()
-                    print('Master has lock')
-                    frm = shared_frame.value
-                    print('Master releasing lock')
-                    lock.release()
-                    print('Master released lock')
-                    break
+            event = master_pipe.recv() #Wait to receive a response from Pipe
+            if type(event) == int and event == 0:            
+                lock.acquire()
+                frm = shared_frame.value
+                lock.release()
             if type(frm) == int: 
                 continue #If its an integer, then it hasn't initialised yet
-            print('Got here')
             #COMPUTE FPS#
             cur_loop+=1
             if cur_loop > self.loop_lim:
@@ -129,7 +119,7 @@ class Process(object):
             fpr_buffer, det = self.clean_fpr(fpr_buffer, det, set_tup[2])
             # print('master', len(det))
 
-    def worker(self, lock, worker_id, shared_frame, ev_queue):
+    def worker(self, lock, worker_id, shared_frame):
         cur_time = time.time()
         cur_loop = 0 #FOR FPS CALC
         fpr_buffer = {} #For false positive clean
@@ -157,7 +147,7 @@ class Process(object):
 
      
     def update_frame(self):
-        frm = self.vid_update_method() #Need to change as required
+        frm = self.vid_update_method()
         frm = cv2.resize(frm, self.vid_shape[:2], interpolation = cv2.INTER_LANCZOS4)
         frm = self.lighting_balance(frm, self.preproc_CLAHE, self.preproc_BLUR)
         frm = np.asarray(frm, dtype='uint8')
@@ -211,7 +201,7 @@ class Process(object):
         try:
             stack_length = input_settings['stack_length']
         except KeyError:
-            stack_length = 5 #Limit the number of stored data points for comparison
+            stack_length = 3 #Limit the number of stored data points for comparison
         try:
             positive_thresh = input_settings['positive_thresh']
         except KeyError:
@@ -329,6 +319,7 @@ class Process(object):
 vid_in = None
 file = 'ISS.mp4'
 cv2.setNumThreads(0) #Done for OpenCV
+cur_frame = None
 
 def update_frame(width_desired = 640.0):  #Change as required
     global vid_in
@@ -341,8 +332,6 @@ def update_frame(width_desired = 640.0):  #Change as required
             frm = cv2.resize(frm, dim, interpolation = cv2.INTER_LANCZOS4)
     except Exception as ex:
         pass
-    cv2.imshow('Hi', frm)
-    cv2.waitKey(1)
     return frm
 
 def setup_video_input():  #Change as required
@@ -367,43 +356,8 @@ def main():
     config = {'CLAHE': True, 'Blur': False, 'Shape': get_vid_shape(), 'Update_Method': update_frame}
     cur_proc = Process(feed_list = feed_list, settings = config)
     cur_proc.run()
-# def main():
-#     vid_in = None
-#     #OpenCV inits
-#     color_stream = None
-#     cypico.load_cascade(test_path)
-#     vid_in = cv2.VideoCapture('ISS.mp4')
-#     vid_in.set(cv2.CAP_PROP_POS_FRAMES,400)
-#     ret = True
-#     cur_time = time.time()
-#     loop_lim = 10
-#     cur_loop = 0
-#     fpr_buffer = {}
-#     while (ret == True):
-#         cur_loop+=1
-#         if cur_loop > loop_lim:
-#             cur_loop = 0
-#             chk = time.time() - cur_time
-#             cur_time = time.time()
-#             print(loop_lim/chk)
-#         _, frame = vid_in.read()
-#         if frame is None: 
-#             print('Error reading frame') 
-#             return
-#         width_des = 640.0
-#         r = width_des / frame.shape[1]
-#         try: 
-#             if r < 1:
-#                 dim = (int(width_des), int(frame.shape[0] * r))
-#                 frame = cv2.resize(frame, dim, interpolation = cv2.INTER_LANCZOS4)
-#         except:
-#             pass
-#         data = lighting_balance(frame, True, False)
-#         data = np.asarray(data, dtype='uint8')
-#         det = cypico.detect(data, face_settings,  'manual')
-#         chk = cypico.remove_overlap(det)
-#         fpr_buffer, chk = clean_fpr(fpr_buffer, chk, face_suppress_settings)
-#         for cur in chk:
+
+#     for cur in chk:
 #             cv2.circle(frame, (int(cur[1][1]), int(cur[1][0])), int(cur[2]/2), (0,0,255), 3)
 #         cv2.imshow('Camera', frame)
 #         cv2.waitKey(1)
