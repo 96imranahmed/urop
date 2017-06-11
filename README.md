@@ -6,15 +6,12 @@ The methods used are as follows:
 1. tracker_haar - a very simple haar implementation. Very slow, not in-plane rotation invariant
 2. tracker_slow - a CNN cascade implementation - again, very slow (although accurate). Not in-plane rotation invariant and models needs retraining (refer to paper)
 3. tracker_pico - a single instance of the pico-based detector (only works for one model at any given time)
-4. **tracker_multi** - a multi-instance pico-based detector (works for multiple models concurrently - note: uses multiple cores!)
+4. **tracker_multi** - a multi-instance pico-based detector (works for multiple models concurrently - note: uses multiple cores)
 
 To work with the multi-object tracker:
-    1. Need to define functions to get a new frame upon update, and to handle results
-        (I have defined a couple of functions myself here as an example, using a video and OpenCV)
-    2. Need to define settings for different models and collect them in a dictionary
-        Refer to your cypico installation to see how the name corresponds to the model
-    3. All the multiproceessing code is specified within the internals of the Process() class and do not need to be touched.
-        Instead, refer to remaining code to get a better idea of how to modify it to work with your requirements
+1. Need to define functions to get a new frame upon update, and to handle results. I have defined a couple of functions myself here as an example, using a video and OpenCV.
+2. Need to define settings for different models and collect them in a dictionary. Refer to your cypico installation to see how the name corresponds to the model.
+3. All the multiproceessing code is specified within the internals of the Process() class and do not need to be modified. Instead, refer to code below the class to get a better idea of how to modify it to work with the robot
 
 Sample usage (see *tracker_multi.py* for a full example):     
 
