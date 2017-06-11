@@ -26,5 +26,6 @@ test_path = os.getcwd() + '/face.hex'
 feed_list = [(False, 'bkp', face_settings, face_suppress_settings), (True, test_path, face_settings, face_suppress_settings)] 
 config = {'CLAHE': True, 'Blur': False, 'Update_Method': update_frame, 'Output_Method': process_detection}
 
-cur_proc = Process(feed_list = feed_list, settings = config)
+cur_proc = Process(feed_list = feed_list, settings = config) #Initialises the detection
+cur_proc.run() #Begins detection
 ```
