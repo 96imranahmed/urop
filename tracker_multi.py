@@ -10,11 +10,11 @@ import os
 
 face_settings = { 'confidence': 3, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
                     'scale': 1.2, 'stride':0.2, 'min_size': 20  }
-face_suppress_settings = {'round_to_val': 30, 'radii_round': 50, 'stack_length': 3, 'positive_thresh': 4, \
+face_suppress_settings = {'round_to_val': 30, 'radii_round': 50, 'stack_length': 5, 'positive_thresh': 4, \
  'remove_thresh': -1, 'step_add': 1, 'step_subtract': -2, 'coarse_scale': 8.0, 'coarse_radii_scale': 3.0}
 
 test_path = os.getcwd() + '/face.hex'
-feed_list = [(False, 'bkp', face_settings, face_suppress_settings), (False, 'bkp', face_settings, face_suppress_settings)] 
+feed_list = [(False, 'bkp', face_settings, face_suppress_settings), (True, test_path, face_settings, face_suppress_settings)] 
 #Please put fastest cascade first, or it may risk ruining the quality of the updates
 
 class Process(object):
@@ -51,11 +51,11 @@ class Process(object):
         try:
             self.vid_update_method = settings['Update_Method']
         except KeyError:
-            raise Exception('No frame update get method passed as part of config')
+            raise Exception('No frame update get method passed as part of config') #Method called when a new frame is requested
         try:
             self.vid_op_method = settings['Output_Method']
         except KeyError:
-            raise Exception('No output method passed as part of config')
+            raise Exception('No output method passed as part of config') #Method called when a result is produced
         for __indx in range(self.num_cascades):
             __inst = feed_list[__indx]
             if __inst[0]:
@@ -64,13 +64,13 @@ class Process(object):
                     one cascade in the appropriate package')
                 else:
                     has_manual = True
-                    cypico.load_cascade(__inst[1]) #Loads cascade into memory
+                    cypico.load_cascade(__inst[1]) #Loads cascade into memory (if required)
                     self.settings[__indx] = ('manual', __inst[2], __inst[3])
             else:
                 self.settings[__indx] = (__inst[1], __inst[2], __inst[3])
 
     def run(self):
-        c_frm = self.m.Value('Frm', 0) #Stores current frame
+        c_frm = self.m.Value('Frm', 0) #Shared array which stores current frame - managed by Manager() object
         for __indx in range(self.num_cascades):
             p = None
             if __indx == 0:
@@ -80,19 +80,19 @@ class Process(object):
             self.instances.append(p)
             p.start()
         pipe_event = False
-        while True:
+        while True: #Processes information from master-main Pipe and results Q
             if self.pipe_main.poll():
                 pipe_event = self.pipe_main.recv() #Receives a request from the master
             if type(pipe_event) == int and pipe_event == 1:
-                self.access_lock.acquire()
+                self.access_lock.acquire() #Acquire lock for consistency
                 c_frm.value = self.update_frame()
-                self.pipe_main.send(0)
-                self.access_lock.release()
+                self.pipe_main.send(0) #Send notice that update to frame has been made via Pipe
+                self.access_lock.release() #Release lock for consistency
             try:
-                results = self.results_q.get(False)
-                self.vid_op_method(results[0], results[1])
+                results = self.results_q.get(False) #Will fail if there are no results
+                self.vid_op_method(results[0], results[1])  #Send (detections, id) to output method for processing (specified by config)
             except Exception as ex:
-                pass #Results Q is empty ah well
+                pass #Results Q is empty - skip Error raised
             pipe_event = None #reset
         [p.join() for p in self.instances]
     
@@ -102,7 +102,7 @@ class Process(object):
         fpr_buffer = {} #For false positive clean
 
         while (True):
-            master_pipe.send(1)
+            master_pipe.send(1) #Request a new frame update from main process
             frm = None
             event = master_pipe.recv() #Wait to receive a response from Pipe
             if type(event) == int and event == 0:            
@@ -111,6 +111,7 @@ class Process(object):
                 lock.release()
             if type(frm) == int: 
                 continue #If its an integer, then it hasn't initialised yet
+            
             #COMPUTE FPS#
             cur_loop+=1
             if cur_loop > self.loop_lim:
@@ -322,7 +323,7 @@ class Process(object):
 
 vid_in = None
 file = 'ISS.mp4'
-cv2.setNumThreads(0) #Done for OpenCV
+cv2.setNumThreads(0) #OpenCV Qwerk
 cur_frame = None
 
 def update_frame(width_desired = 640.0):  #Change as required
