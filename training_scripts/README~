@@ -1,0 +1,10 @@
+Uses the following datasets:
+
+FDDB: http://vis-www.cs.umass.edu/fddb/
+WIDER_TRAIN & WIDER_VAL: http://mmlab.ie.cuhk.edu.hk/projects/WIDERFace/
+GENKI-R2009a: https://docs.google.com/uc?export=download&confirm=cx-l&id=0Bw4IT5ZOzJj6bm5scnhQWlltaUE
+HollywoodHeads: 
+BackgroundImages: https://drive.google.com/file/d/0Bw4IT5ZOzJj6Y2ZjRzRMMjNkLTQ/view?usp=sharing
+
+Makes use of the following libraries:
+https://github.com/mpatacchiola/deepgaze (relevant models are contained in the 'head_pose' folder)
