@@ -2,6 +2,8 @@
 **The /training folder contains the dataset scripts to train pico**
 **This repository contains the detection code using various methods**
 
+Note: I have also included **face.hex** to demonstrate an example of how a cascade can be loaded into memory at runtime - this cascade is simply the default facefinder cascade from the original pico implementation. Loading cascades like this should **not** be done at production level because of performance limitations (this is simply a testing aide)
+
 The methods used are as follows:
 1. tracker_haar - a very simple haar implementation. Very slow, not in-plane rotation invariant
 2. tracker_slow - a CNN cascade implementation - again, very slow (although accurate). Not in-plane rotation invariant and models needs retraining (refer to paper)
