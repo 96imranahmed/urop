@@ -6,7 +6,7 @@
 4. HollywoodHeads: http://www.di.ens.fr/willow/research/headdetection/
 5. BackgroundImages: https://drive.google.com/file/d/0Bw4IT5ZOzJj6Y2ZjRzRMMjNkLTQ/view?usp=sharing
 
-** Also makes use of the following libraries:**
+**Also makes use of the following libraries:**
 1. https://github.com/mpatacchiola/deepgaze (relevant models are contained in the 'head_pose' folder).
 2. OpenCV3
 
