@@ -14,8 +14,14 @@ face_suppress_settings = {'round_to_val': 30, 'radii_round': 50, 'stack_length':
  'remove_thresh': -1, 'step_add': 1, 'step_subtract': -2, 'coarse_scale': 8.0, 'coarse_radii_scale': 3.0}
 
 test_path = os.getcwd() + '/face.hex'
-feed_list = [(False, 'bkp', face_settings, face_suppress_settings), (True, test_path, face_settings, face_suppress_settings)] 
-#Please put fastest cascade first, or it may risk ruining the quality of the updates
+feed_list = [(False, 'bkp', face_settings, face_suppress_settings, True), (True, test_path, face_settings, face_suppress_settings, True)] 
+#The tuple is specified as follows:
+#Bool: whether the model needs to be loaded at runtime (True) or installed in cypico (False)
+#Object: If model is loaded, this is an *absolute* path to the model. If not, this is the model identifier (see cypico)
+#Dictionary: Specific settings passed to the model as part of cypico
+#Dictionary: Specific settings passed to the false positive filtering algorithm
+#Bool: whether to enable/disable false positive filtering: usually worth doing when testing for the best model parameters
+#NOTE: Please put fastest cascade first, or it may risk ruining the quality of the updates
 
 class Process(object):
     #Parameters set by config
@@ -65,9 +71,11 @@ class Process(object):
                 else:
                     has_manual = True
                     cypico.load_cascade(__inst[1]) #Loads cascade into memory (if required)
-                    self.settings[__indx] = ('manual', __inst[2], __inst[3])
+                    self.settings[__indx] = ('manual', __inst[2], __inst[3], __inst[4])
+                    print('WARNING: loading cascades from memory SHOULD not be done at production level as it \
+                    will likely impact performance and may cause memory leaks!')
             else:
-                self.settings[__indx] = (__inst[1], __inst[2], __inst[3])
+                self.settings[__indx] = (__inst[1], __inst[2], __inst[3], __inst[4])
 
     def run(self):
         c_frm = self.m.Value('Frm', 0) #Shared array which stores current frame - managed by Manager() object
@@ -122,7 +130,7 @@ class Process(object):
             #COMPUTE FPS END#
             det = cypico.detect(frm, set_tup[1], set_tup[0])
             det = cypico.remove_overlap(det)
-            fpr_buffer, det = self.clean_fpr(fpr_buffer, det, set_tup[2])
+            if set_tup[3]: fpr_buffer, det = self.clean_fpr(fpr_buffer, det, set_tup[2])
             q_out.put((det, 0))
 
     def worker(self, lock, worker_id, shared_frame, q_out):
@@ -147,7 +155,7 @@ class Process(object):
 
             det = cypico.detect(frm, set_tup[1], set_tup[0])
             det = cypico.remove_overlap(det)
-            fpr_buffer, det = self.clean_fpr(fpr_buffer, det, set_tup[2])
+            if set_tup[3]: fpr_buffer, det = self.clean_fpr(fpr_buffer, det, set_tup[2])
             q_out.put((det, worker_id))
 
 
