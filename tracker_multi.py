@@ -8,19 +8,26 @@ import cypico
 import multiprocessing
 import os
 
-face_settings = { 'confidence': 3, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
-                    'scale': 1.2, 'stride':0.2, 'min_size': 20  }
+face_settings = { 'confidence': 5, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
+                    'scale': 1.2, 'stride':0.2, 'min_size': 35  }
 face_suppress_settings = {'round_to_val': 30, 'radii_round': 50, 'stack_length': 5, 'positive_thresh': 4, \
  'remove_thresh': -1, 'step_add': 1, 'step_subtract': -2, 'coarse_scale': 8.0, 'coarse_radii_scale': 3.0}
 
-test_path = os.getcwd() + '/face.hex'
-feed_list = [(False, 'bkp', face_settings, face_suppress_settings, True), (True, test_path, face_settings, face_suppress_settings, True)] 
+large_size_settings = { 'confidence': 5, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
+                    'scale': 1.2, 'stride':0.2, 'min_size': 70  }
+
+test_path = os.getcwd() + '/m_10_side_wide'
+feed_list = [ (False, 'faces', face_settings, face_suppress_settings, False, 640.0), (False, 'faces', large_size_settings, face_suppress_settings, False, 1280.0),
+(False, 'faces', face_settings, face_suppress_settings, False, 640.0)]
+#(False, 'faces', side_settings, face_suppress_settings, False, 640.0)
+
 #The tuple is specified as follows:
 #Bool: whether the model needs to be loaded at runtime (True) or installed in cypico (False)
 #Object: If model is loaded, this is an *absolute* path to the model. If not, this is the model identifier (see cypico)
 #Dictionary: Specific settings passed to the model as part of cypico
 #Dictionary: Specific settings passed to the false positive filtering algorithm
 #Bool: whether to enable/disable false positive filtering: usually worth doing when testing for the best model parameters
+#Float/Int: desired video width - cascades can usually perform better with larger widths
 #NOTE: Please put fastest cascade first, or it may risk ruining the quality of the updates
 
 class Process(object):
@@ -38,10 +45,11 @@ class Process(object):
     pipe_main, pipe_master = multiprocessing.Pipe()
     access_lock = multiprocessing.Lock()
     instances = []
+    widths_requested = []
 
     #Constants
     loop_lim = 10
-
+    video_in_width = 0
     
     def __init__(self, feed_list, settings):
         has_manual = False
@@ -62,6 +70,12 @@ class Process(object):
             self.vid_op_method = settings['Output_Method']
         except KeyError:
             raise Exception('No output method passed as part of config') #Method called when a result is produced
+        try:
+            self.video_in_width = settings['Video_Width']
+        except KeyError:
+            raise Exception('No video width specified as part of config') #Method called when a result is produced
+
+        des_widths = []
         for __indx in range(self.num_cascades):
             __inst = feed_list[__indx]
             if __inst[0]:
@@ -71,20 +85,25 @@ class Process(object):
                 else:
                     has_manual = True
                     cypico.load_cascade(__inst[1]) #Loads cascade into memory (if required)
-                    self.settings[__indx] = ('manual', __inst[2], __inst[3], __inst[4])
+                    self.settings[__indx] = ('manual', __inst[2], __inst[3], __inst[4], __inst[5])
                     print('WARNING: loading cascades from memory SHOULD not be done at production level as it \
                     will likely impact performance and may cause memory leaks!')
+                    des_widths.append(__inst[5])
+                    
             else:
-                self.settings[__indx] = (__inst[1], __inst[2], __inst[3], __inst[4])
+                self.settings[__indx] = (__inst[1], __inst[2], __inst[3], __inst[4], __inst[5])
+                des_widths.append(__inst[5])
+        self.widths_requested = set(des_widths)
 
     def run(self):
-        c_frm = self.m.Value('Frm', 0) #Shared array which stores current frame - managed by Manager() object
+        c_dct = self.m.dict()  #Shared dictionary which stores current frame - managed by Manager() object
+        c_dct['seed'] = 0 #Used to make sure frame numbers are correct and the same frame isn't processed twice by a particular cascade
         for __indx in range(self.num_cascades):
             p = None
             if __indx == 0:
-                p = multiprocessing.Process(target=self.master, args=(self.access_lock, self.settings[0], c_frm, self.pipe_master, self.results_q))
+                p = multiprocessing.Process(target=self.master, args=(self.access_lock, self.settings[0], c_dct, self.pipe_master, self.results_q))
             else:
-                p = multiprocessing.Process(target=self.worker, args=(self.access_lock, __indx, c_frm, self.results_q))
+                p = multiprocessing.Process(target=self.worker, args=(self.access_lock, __indx, c_dct, self.results_q))
             self.instances.append(p)
             p.start()
         pipe_event = False
@@ -93,32 +112,46 @@ class Process(object):
                 pipe_event = self.pipe_main.recv() #Receives a request from the master
             if type(pipe_event) == int and pipe_event == 1:
                 self.access_lock.acquire() #Acquire lock for consistency
-                c_frm.value = self.update_frame()
+                self.resize_array(self.update_frame(), c_dct)
                 self.pipe_main.send(0) #Send notice that update to frame has been made via Pipe
                 self.access_lock.release() #Release lock for consistency
-            try:
-                results = self.results_q.get(False) #Will fail if there are no results
-                self.vid_op_method(results[0], results[1])  #Send (detections, id) to output method for processing (specified by config)
-            except Exception as ex:
-                pass #Results Q is empty - skip Error raised
+            # print(self.results_q.qsize())
+            results = []
+            while (self.results_q.qsize() > 0): #NOTE: Watch out for overflows here
+                res_stub = self.results_q.get() #Will fail if there are no results
+                results.append(res_stub)
+            if len(results) > 0: self.vid_op_method(results)
             pipe_event = None #reset
         [p.join() for p in self.instances]
     
+    def resize_array(self, frame_in, shared_dict):
+        if frame_in is None: return dict_out
+        for width in self.widths_requested:
+            r = width / frame_in.shape[1] 
+            try: 
+                if r <= 1:
+                    dim = (int(width), int(frame_in.shape[0] * r))
+                    frm = cv2.resize(frame_in, dim, interpolation = cv2.INTER_LANCZOS4)
+                    shared_dict[width] = frm
+                else: raise ValueError('Width is greater than input width', width)  
+            except Exception as ex:
+                print(ex)
+        shared_dict['seed'] += 1
+
     def master(self, lock, set_tup, shared_frame, master_pipe, q_out):
         cur_time = time.time()
         cur_loop = 0 #FOR FPS CALC
         fpr_buffer = {} #For false positive clean
-
+        prev_val = 0
         while (True):
             master_pipe.send(1) #Request a new frame update from main process
             frm = None
             event = master_pipe.recv() #Wait to receive a response from Pipe
             if type(event) == int and event == 0:            
                 lock.acquire()
-                frm = shared_frame.value
+                if set_tup[4] in shared_frame: frm = shared_frame[set_tup[4]]
+                else: raise IndexError('Cannot find suitably scaled video frame')
                 lock.release()
-            if type(frm) == int: 
-                continue #If its an integer, then it hasn't initialised yet
             
             #COMPUTE FPS#
             cur_loop+=1
@@ -126,40 +159,53 @@ class Process(object):
                 cur_loop = 0
                 chk = time.time() - cur_time
                 cur_time = time.time()
-                print('Master FPS = ' + str(self.loop_lim/chk))
+                print('NET FPS = ' + str(self.loop_lim/chk))
             #COMPUTE FPS END#
+
             det = cypico.detect(frm, set_tup[1], set_tup[0])
             det = cypico.remove_overlap(det)
+            # print('master', len(det))
             if set_tup[3]: fpr_buffer, det = self.clean_fpr(fpr_buffer, det, set_tup[2])
-            q_out.put((det, 0))
+            q_out.put((self.post_process(det,0), 0))
 
     def worker(self, lock, worker_id, shared_frame, q_out):
         cur_time = time.time()
         cur_loop = 0 #FOR FPS CALC
         fpr_buffer = {} #For false positive clean
         set_tup = self.settings[worker_id]
+        prev_val = 0
+        det = []
+        frm = 0
         while(True):
-            lock.acquire(timeout = 0.5) #Timeout if not switched in 1/2 second
-            frm = shared_frame.value
+            skip = False
+            lock.acquire() 
+            if not shared_frame['seed'] == prev_val: #Process new frame!
+                if set_tup[4] in shared_frame:
+                    frm = shared_frame[set_tup[4]]
+                    prev_val = shared_frame['seed']
+                else: raise IndexError('Cannot find suitably scaled video frame')
+            else: skip = True
             lock.release() #Only release if locked
-            if type(frm) == int: continue 
-
-            #COMPUTE FPS#
-            cur_loop+=1
-            if cur_loop > self.loop_lim:
-                cur_loop = 0
-                chk = time.time() - cur_time
-                cur_time = time.time()
-                print('Worker ' + str(worker_id) + ' FPS = ' + str(self.loop_lim/chk))
-            #COMPUTE FPS END#
+            if skip: continue 
 
             det = cypico.detect(frm, set_tup[1], set_tup[0])
             det = cypico.remove_overlap(det)
+            # print('worker' , worker_id, len(det))
             if set_tup[3]: fpr_buffer, det = self.clean_fpr(fpr_buffer, det, set_tup[2])
-            q_out.put((det, worker_id))
+            q_out.put((self.post_process(det,worker_id), worker_id))
+  
+    def post_process(self, detections, id_i):
+        r = self.settings[id_i][4]/self.video_in_width #Scales up to output video size
+        det_out = []
+        for det in detections:
+            chk_add = list(det)
+            chk_add[1] = list(chk_add[1])
+            chk_add[1][1] /= r
+            chk_add[1][0] /= r
+            chk_add[2] /= r
+            det_out.append(chk_add)
+        return det_out
 
-
-     
     def update_frame(self):
         frm = self.vid_update_method()
         frm = self.lighting_balance(frm, self.preproc_CLAHE, self.preproc_BLUR)
@@ -334,17 +380,10 @@ file = 'ISS.mp4'
 cv2.setNumThreads(0) #OpenCV Qwerk
 cur_frame = None
 
-def update_frame(width_desired = 640.0):  #Change as required
+def update_frame():  #Change as required
     global vid_in, cur_frame
     ret, frm = vid_in.read()
     if ret == False: raise Exception('Video update failure')
-    r = width_desired / frm.shape[1]
-    try: 
-        if r < 1:
-            dim = (int(width_desired), int(frm.shape[0] * r))
-            frm = cv2.resize(frm, dim, interpolation = cv2.INTER_LANCZOS4)
-    except Exception as ex:
-        print(ex)
     cur_frame = frm
     return frm
 
@@ -353,18 +392,19 @@ def setup_video_input():  #Change as required
     vid_in = cv2.VideoCapture(file)
     vid_in.set(cv2.CAP_PROP_POS_FRAMES,500)
 
-def process_detection(detections, id):
+def process_detection(queue_list):
     global cur_frame
-    if cur_frame is None: return #Hasn't initialised yet, return
     id_color_map = {0:(0,0,255), 1:(0,255,0), 2:(255,0,0)}
-    for cur in detections:
-        cv2.circle(cur_frame, (int(cur[1][1]), int(cur[1][0])), int(cur[2]/2), id_color_map[id], 3)
+    scale_map = {0: 1, 1:1.2, 2:0.8} #Just for clarity when displaying!
+    for cscd_op in queue_list:
+        for cur in cscd_op[0]:
+            cv2.circle(cur_frame, (int(cur[1][1]), int(cur[1][0])), int(scale_map[cscd_op[1]]*cur[2]/2), id_color_map[cscd_op[1]], 3)
     cv2.imshow('Camera', cur_frame)
     cv2.waitKey(1)
 
 def main():
     setup_video_input()
-    config = {'CLAHE': True, 'Blur': False, 'Update_Method': update_frame, 'Output_Method': process_detection}
+    config = {'CLAHE': True, 'Blur': False, 'Update_Method': update_frame, 'Output_Method': process_detection, 'Video_Width':1280.0}
     cur_proc = Process(feed_list = feed_list, settings = config)
     cur_proc.run()
 

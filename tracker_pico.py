@@ -13,8 +13,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--openni", help="Enable read from Asus Action Cam", action='store_true', default=False)
 args = parser.parse_args()
 
-face_settings = { 'confidence': 2, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
-                    'scale': 1.4, 'stride':0.4, 'min_size': 30  }
+face_settings = { 'confidence': 5, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
+                    'scale': 1.2, 'stride':0.2, 'min_size': 70  }
+
 face_suppress_settings = {'round_to_val': 30, 'radii_round': 50, 'stack_length': 3, 'positive_thresh': 4, \
  'remove_thresh': -1, 'step_add': 1, 'step_subtract': -2, 'coarse_scale': 8.0, 'coarse_radii_scale': 3.0}
 
@@ -22,6 +23,7 @@ def main(args_in):
     vid_in = None
     open_ni = args_in.openni
     #OpenCV inits
+    load_cascade(os.getcwd() + '/m_10_side_wide')
     color_stream = None
     if open_ni:
         openni2.initialize('./redist/')
@@ -59,7 +61,7 @@ def main(args_in):
         if frame is None: 
             print('Error reading frame') 
             return
-        width_des = 640.0
+        width_des =1280  
         r = width_des / frame.shape[1]
         try: 
             if r < 1:
@@ -71,11 +73,11 @@ def main(args_in):
         data = np.asarray(data, dtype='uint8')
         det = None
         if open_ni:
-            det = detect(data, face_settings, 'bkp')
+            pass
         else:
-            det = detect(data, face_settings,  'faces')
+            det = detect(data, face_settings,  'manual')
         chk = remove_overlap(det)
-        fpr_buffer, chk = clean_fpr(fpr_buffer, chk, face_suppress_settings)
+        # fpr_buffer, chk = clean_fpr(fpr_buffer, chk, face_suppress_settings)
         for cur in chk:
             cv2.circle(frame, (int(cur[1][1]), int(cur[1][0])), int(cur[2]/2), (0,0,255), 3)
         cv2.imshow('Webcam', frame)
