@@ -8,7 +8,7 @@ import cypico
 import multiprocessing
 import os
 
-face_settings = { 'confidence': 5, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
+face_settings = { 'confidence': 4, 'orientations': [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875], \
                     'scale': 1.2, 'stride':0.2, 'min_size': 35  }
 face_suppress_settings = {'round_to_val': 30, 'radii_round': 50, 'stack_length': 5, 'positive_thresh': 4, \
  'remove_thresh': -1, 'step_add': 1, 'step_subtract': -2, 'coarse_scale': 8.0, 'coarse_radii_scale': 3.0}
@@ -18,7 +18,7 @@ large_size_settings = { 'confidence': 7, 'orientations': [0, 0.125, 0.25, 0.375,
 
 test_path = os.getcwd() + '/m_10_side_wide'
 feed_list = [ (False, 'faces', face_settings, face_suppress_settings, False, 640.0),
-                (False, 'faces', large_size_settings, face_suppress_settings, False, 1280.0)]
+                (False, 'faces', face_settings, face_suppress_settings, False, 640.0)]
 #(False, 'faces', side_settings, face_suppress_settings, False, 640.0)
 
 #The tuple is specified as follows:
@@ -380,9 +380,11 @@ file = 'ISS.mp4'
 cv2.setNumThreads(0) #OpenCV Qwerk
 cur_frame = None
 
-def update_frame():  #Change as required
+def update_frame(vid_width = 640):  #Change as required
     global vid_in, cur_frame
-    ret, frm = vid_in.read()
+    ret, frm = vid_in.read()    
+    r = vid_width/frm.shape[1]
+    frm = cv2.resize(frm,None,fx=r, fy=r, interpolation = cv2.INTER_CUBIC)
     if ret == False: raise Exception('Video update failure')
     cur_frame = frm
     return frm
@@ -390,7 +392,7 @@ def update_frame():  #Change as required
 def setup_video_input():  #Change as required
     global vid_in, file
     vid_in = cv2.VideoCapture(file)
-    vid_in.set(cv2.CAP_PROP_POS_FRAMES,500)
+    vid_in.set(cv2.CAP_PROP_POS_FRAMES,200)
 
 def process_detection(queue_list):
     global cur_frame
@@ -404,7 +406,7 @@ def process_detection(queue_list):
 
 def main():
     setup_video_input()
-    config = {'CLAHE': True, 'Blur': False, 'Update_Method': update_frame, 'Output_Method': process_detection, 'Video_Width':1280.0}
+    config = {'CLAHE': True, 'Blur': False, 'Update_Method': update_frame, 'Output_Method': process_detection, 'Video_Width':640.0}
     cur_proc = Process(feed_list = feed_list, settings = config)
     cur_proc.run()
 
